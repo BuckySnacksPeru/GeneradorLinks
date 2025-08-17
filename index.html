@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Mapa de Rutas — Fuerza de Ventas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Leaflet local -->
+  <link rel="stylesheet" href="./leaflet.css" />
+  <script src="./leaflet.js"></script>
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+    :root {
+      --card-bg: rgba(255,255,255,0.95);
+      --accent: #E33111;   /* rojo puntos/polígonos */
+      --label-bg: rgba(0,102,255,0.9);
+      --shadow: 0 2px 10px rgba(0,0,0,.15);
+      --radius: 12px;
+      --font: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    /* Panel de filtros */
+    .filters {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      background: var(--card-bg); padding: 12px; border-radius: var(--radius);
+      box-shadow: var(--shadow); max-width: 300px; font-family: var(--font);
+      backdrop-filter: blur(4px);
+    }
+    .filters h3 { margin: 0 0 8px; font-size: 14px; }
+    .filters label { display: block; margin: 6px 0 4px; font-size: 12px; color: #444; }
+    .filters select { width: 100%; padding: 6px; border-radius: 8px; border: 1px solid #ccc; }
+    .filters .row { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .filters .actions { display: flex; gap: 8px; margin-top: 8px; }
+    .filters button {
+      border: 0; border-radius: 10px; padding: 8px 10px; cursor: pointer; font-weight: 600;
+    }
+    .btn-apply { background: #005af0; color: #fff; }
+    .btn-clear { background: #eee; color: #333; }
+
+    /* Indicador de zoom */
+    .zoom-indicator {
+      position: absolute; left: 10px; top: 90px; z-index: 1000;
+      background: rgba(255,255,255,.9); border-radius: 8px; padding: 6px 8px;
+      font: 12px/1.2 var(--font); color: #222; box-shadow: var(--shadow);
+    }
+
+    /* Botón de mi ubicación */
+    .locate-control {
+      position: absolute; left: 10px; top: 140px; z-index: 1000;
+      background: #fff; border-radius: 8px; box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .locate-control button {
+      border: 0; background: #fff; padding: 8px; width: 36px; height: 36px; cursor: pointer;
+    }
+    .locate-control button:hover { background: #f2f2f2; }
+
+    /* Estilos de puntos y etiquetas */
+    .label {
+      background: transparent;
+      color: rgba(0,102,255,0.9);
+      padding: 0 3px;          /* antes: 2px 6px */
+      margin: 0;
+      border-radius: 3px;      /* más pequeño */
+      white-space: nowrap;
+      font: 12px/1.1 var(--font);
+      border: 0;
+      font-weight: bold;
+      box-shadow: none;
+      display: inline-block;   /* caja del tamaño del texto */
+      pointer-events: none;
+    }
+
+    /* por si Leaflet inyecta clase base del divIcon */
+    .leaflet-div-icon {
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
+    }
+
+    .filters.hidden { display: none; }
+
+    /* botón flotante para mostrar/ocultar filtros */
+    .filters-toggle {
+      position: absolute; top: 10px; right: 10px; z-index: 1100;
+      background: #005af0; color: #fff; border: 0; border-radius: 10px;
+      padding: 8px 10px; box-shadow: var(--shadow); font-family: var(--font);
+      cursor: pointer;
+    }
+
+    /* Leyenda */
+    .legend {
+      position: absolute; bottom: 10px; left: 10px; z-index: 1000;
+      background: var(--card-bg); padding: 8px 10px; border-radius: 8px;
+      box-shadow: var(--shadow); font: 12px var(--font);
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Panel de filtros -->
+  <div class="filters">
+    <h3>Filtros</h3>
+    <div class="row">
+      <label for="f-dep">Departamento</label>
+      <select id="f-dep" multiple></select>
+
+      <label for="f-prov">Provincia</label>
+      <select id="f-prov" multiple></select>
+
+      <label for="f-dist">Distrito</label>
+      <select id="f-dist" multiple></select  >
+
+      <label for="f-ruta">Ruta</label>
+      <select id="f-ruta" multiple></select>
+    </div>
+    <div class="actions">
+      <button class="btn-apply" id="applyFilters">Aplicar</button>
+      <button class="btn-clear" id="clearFilters">Limpiar</button>
+    </div>
+    <small style="display:block;margin-top:6px;color:#666">Ctrl/Cmd+clic para seleccionar varios</small>
+  </div>
+
+  <button id="filterToggle" class="filters-toggle">Ocultar filtros</button>
+
+  <!-- Indicador de zoom -->
+  <div class="zoom-indicator">Zoom: <span id="zoomLevel">—</span></div>
+
+  <!-- Botón de mi ubicación -->
+  <div class="locate-control"><button id="locateBtn" title="Mi ubicación">📍</button></div>
+
+  <!-- Leyenda simple -->
+  <div class="legend">
+    <div><span style="display:inline-block;width:10px;height:10px;background:#E33111; border-radius:50%; margin-right:6px;"></span>Punto de venta</div>
+    <div><span style="display:inline-block;width:12px;height:12px;border:2px solid #E33111; background: rgba(227,49,17,0.10); margin-right:6px;"></span>Polígono de ruta</div>
+    <div><span style="display:inline-block;width:12px;height:2px;background:#444; display:inline-block; margin-right:6px; vertical-align:middle;"></span>Línea a etiqueta</div>
+  </div>
+
+  <script>
+    let POINTS_URL, POLYS_URL;
+
+    // Función para cargar la configuración
+    async function loadConfig() {
+      try {
+        const response = await fetch('./config.json');
+        const config = await response.json();
+        
+        POINTS_URL = encodeURI(`./data/${config.client_prefix}_PuntosPublicos_${config.now}.geojson`);
+        POLYS_URL = encodeURI(`./data/${config.client_prefix}_PoligonosPublicos_${config.now}.geojson`);
+        
+        // Llamamos a la función que depende de estas variables
+        initializeMap();
+      } catch (error) {
+        console.error('Error cargando configuración:', error);
+      }
+    }
+
+       // Función que contiene todo tu código que depende de las URLs
+    function initializeMap() {
+      // Umbrales de zoom para mostrar polígonos y etiquetas
+      const ZOOM_SHOW_POLYGONS = 14;
+      const ZOOM_SHOW_LABELS   = 17;
+  
+      // Crear mapa base
+      const map = L.map('map', { zoomControl: true });
+      // Toggle del panel de filtros (ocultar/mostrar)
+      const filtersEl = document.querySelector('.filters');
+      const toggleBtn = document.getElementById('filterToggle');
+      toggleBtn.addEventListener('click', () => {
+        filtersEl.classList.toggle('hidden');
+        toggleBtn.textContent = filtersEl.classList.contains('hidden')
+          ? 'Mostrar filtros'
+          : 'Ocultar filtros';
+      });
+      
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 20, attribution: '&copy; OpenStreetMap'
+      }).addTo(map);
+  
+      // Capas contenedoras
+      let polygonsLayer;                      // GeoJSON de polígonos (cada feature con props.Ruta)
+      const pointsLayer = L.layerGroup();     // Círculos de puntos
+      const labelsLayer = L.layerGroup();     // Etiquetas HTML
+      const linesLayer  = L.layerGroup();     // Líneas punto ↔ etiqueta
+  
+      // Datos en memoria
+      let allPointFeatures = [];  // features de puntos
+      let allPolyFeatures  = [];  // features de polígonos
+      const labelItems     = [];  // [{marker, labelMarker, line, props, lat, lng}, ...]
+  
+      // Indicador de zoom
+      const zoomLevelEl = document.getElementById('zoomLevel');
+      function updateZoomIndicator() { zoomLevelEl.textContent = map.getZoom(); }
+  
+      // Utilidades de selects
+      function uniqueNonEmpty(arr) {
+        return Array.from(new Set(arr.filter(v => v !== null && v !== undefined && String(v).trim() !== ''))).sort();
+      }
+      function fillSelect(selectEl, values) {
+        const frag = document.createDocumentFragment();
+        for (const v of values) {
+          const opt = document.createElement('option');
+          opt.value = v; opt.textContent = v;
+          frag.appendChild(opt);
+        }
+        selectEl.innerHTML = '';
+        selectEl.appendChild(frag);
+      }
+      function selectedValues(sel) {
+        return Array.from(sel.selectedOptions).map(o => o.value);
+      }
+  
+      // Cargar polígonos
+      fetch(POLYS_URL)
+        .then(r => r.json())
+        .then(geo => {
+          allPolyFeatures = geo.features || [];
+          polygonsLayer = L.geoJSON(geo, {
+            style: () => ({ color: '#E33111', weight: 2, fillColor: '#E33111', fillOpacity: 0.10 })
+          }).addTo(map);
+          // ✅ Por defecto, todos pasan el filtro hasta que el usuario aplique algo
+          polygonsLayer.eachLayer(layer => { layer._visibleByFilter = true; });
+  
+          if (polygonsLayer.getLayers().length > 0) {
+            map.fitBounds(polygonsLayer.getBounds(), { padding: [20,20] });
+          }
+          togglePolygonsByZoom();
+        })
+        .catch(err => console.error('Error cargando polígonos:', err));
+  
+      // Cargar puntos y construir marcadores + etiquetas + líneas
+      fetch(POINTS_URL)
+        .then(r => r.json())
+        .then(geo => {
+          allPointFeatures = geo.features || [];
+  
+          for (const f of allPointFeatures) {
+            if (!f || !f.geometry || !f.geometry.coordinates) continue;
+            const [lng, lat] = f.geometry.coordinates;
+            const props = f.properties || {};
+            const idText = String(props.ID ?? '');
+  
+            // Punto
+            const marker = L.circleMarker([lat, lng], {
+              radius: 5, color: '#E33111', weight: 2, fillColor: '#E33111', fillOpacity: 0.9
+            }).addTo(pointsLayer);
+  
+            // Etiqueta (como divIcon)
+            const labelMarker = L.marker([lat, lng], {
+              interactive: false,
+              icon: L.divIcon({ className: 'label', html: idText, iconSize: null, iconAnchor: [0, 0] })
+            }).addTo(labelsLayer);
+  
+            // Línea punto ↔ etiqueta (se actualizará en pantalla)
+            const line = L.polyline([[lat, lng], [lat, lng]], { color: 'rgba(0,102,255,0.9)', weight: 1, opacity: 1 })
+              .addTo(linesLayer);
+  
+            labelItems.push({ marker, labelMarker, line, props, lat, lng });
+          }
+  
+          pointsLayer.addTo(map);
+          labelsLayer.addTo(map);
+          linesLayer.addTo(map);
+  
+          // Si no hubo polígonos, centra con puntos
+          if (!polygonsLayer || polygonsLayer.getLayers().length === 0) {
+            map.setView(pointsLayer.getBounds().getCenter(), 14);
+          }
+  
+          // Posicionamiento de etiquetas con offset en píxeles (y línea)
+          
+  
+  
+          // ==== Recolocación inteligente de etiquetas (sin solaparse) ====
+          //const SPIRAL_RADII = [18, 24, 30, 36, 42, 50]; // radios en px
+          const SPIRAL_RADII = [14, 18, 22, 28, 34, 40];
+          const SPIRAL_DIRS = [
+            {x: 1, y:-1}, // NE  ← primera opción (diagonal)
+            {x:-1, y:-1}, // NO
+            {x: 1, y: 1}, // SE
+            {x:-1, y: 1}, // SO
+            {x: 0, y:-1}, // N
+            {x: 1, y: 0}, // E
+            {x: 0, y: 1}, // S
+            {x:-1, y: 0}  // O
+          ];
+          const CANDIDATE_OFFSETS = (function(){
+            const out = [];
+            for (const r of SPIRAL_RADII) for (const d of SPIRAL_DIRS) out.push({x: d.x * r, y: d.y * r});
+            return out;
+          })();
+  
+          // Tamaño del label (si aún no renderiza, aproximamos por longitud del texto)
+          function getLabelSize(item) {
+            const el = item.labelMarker.getElement();
+            if (el && el.offsetWidth && el.offsetHeight) return { w: el.offsetWidth, h: el.offsetHeight };
+            const text = String(item.props?.ID ?? '');
+            const w = Math.max(18, text.length * 7 + 12); // aproximación: 7px por carácter + padding
+            const h = 18;
+            return { w, h };
+          }
+  
+          function overlaps(a, b) {
+            return !(a.x2 < b.x1 || a.x1 > b.x2 || a.y2 < b.y1 || a.y1 > b.y2);
+          }
+  
+          function placeLabelFor(item, placedBoxes) {
+            const baseLL = L.latLng(item.lat, item.lng);
+            const basePx = map.project(baseLL, map.getZoom());
+            const size   = getLabelSize(item); // {w,h}
+          
+            // Probamos posiciones en espiral (arriba primero). Colocamos en la primera libre.
+            for (const off of CANDIDATE_OFFSETS) {
+              const candPx = L.point(basePx.x + off.x, basePx.y + off.y);   // esquina SUP-IZQ de la etiqueta
+              const candLL = map.unproject(candPx, map.getZoom());
+          
+              // Ubicamos provisionalmente la etiqueta en esa esquina
+              item.labelMarker.setLatLng(candLL);
+          
+              // Caja en píxeles de la etiqueta (para evitar solapes)
+              const box = { x1: candPx.x, y1: candPx.y, x2: candPx.x + size.w, y2: candPx.y + size.h };
+          
+              // ¿choca con alguna ya puesta?
+              let collide = false;
+              for (const b of placedBoxes) { if (overlaps(box, b)) { collide = true; break; } }
+              if (!collide) {
+                placedBoxes.push(box);
+          
+                // PUNTO DE ANCLA DE LA LÍNEA: borde del rectángulo más cercano al punto
+                // Regla: si el label quedó a la derecha (off.x > 0) conecto al borde IZQ;
+                // si quedó a la izquierda, al borde DER. Análogo con arriba/abajo en Y.
+                const attachPx = L.point(
+                  (off.x >= 0 ? box.x1 : box.x2),
+                  (off.y >= 0 ? box.y1 : box.y2)
+                );
+                const attachLL = map.unproject(attachPx, map.getZoom());
+          
+                item.line.setLatLngs([baseLL, attachLL]);  // ¡ahora sí al borde del texto!
+                return;
+              }
+            }
+          
+            // Si ninguna posición quedó libre, usamos la última candidata
+            const lastOff = CANDIDATE_OFFSETS[CANDIDATE_OFFSETS.length - 1];
+            const lastPx  = L.point(basePx.x + lastOff.x, basePx.y + lastOff.y);
+            const lastLL  = map.unproject(lastPx, map.getZoom());
+            item.labelMarker.setLatLng(lastLL);
+          
+            const lastBox = { x1: lastPx.x, y1: lastPx.y, x2: lastPx.x + size.w, y2: lastPx.y + size.h };
+            placedBoxes.push(lastBox);
+          
+            const fallbackAttachPx = L.point(
+              (lastOff.x >= 0 ? lastBox.x1 : lastBox.x2),
+              (lastOff.y >= 0 ? lastBox.y1 : lastBox.y2)
+            );
+            item.line.setLatLngs([baseLL, map.unproject(fallbackAttachPx, map.getZoom())]);
+          }
+  
+  
+          let rafId = null;
+          function updateAllLabels() {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+              const placed = [];
+              for (const it of labelItems) {
+                // Solo reposicionamos las que están visibles (por filtros/zoom)
+                if (!map.hasLayer(it.labelMarker)) continue;
+                placeLabelFor(it, placed);
+              }
+              toggleLabelsByZoom(); // respeta el umbral de zoom para mostrar/ocultar el conjunto
+            });
+          }
+  
+  
+          // Cargar valores únicos a filtros
+          const deps  = uniqueNonEmpty(allPointFeatures.map(f => f.properties?.Departamentos));
+          const provs = uniqueNonEmpty(allPointFeatures.map(f => f.properties?.Provincias));
+          const dists = uniqueNonEmpty(allPointFeatures.map(f => f.properties?.Distritos));
+          const rutas = uniqueNonEmpty(allPointFeatures.map(f => f.properties?.Ruta));
+  
+          fillSelect(document.getElementById('f-dep'),  deps);
+          fillSelect(document.getElementById('f-prov'), provs);
+          fillSelect(document.getElementById('f-dist'), dists);
+          fillSelect(document.getElementById('f-ruta'), rutas);
+  
+          // Aplicar/limpiar filtros
+          function applyFilters() {
+            const selDep  = selectedValues(document.getElementById('f-dep'));
+            const selProv = selectedValues(document.getElementById('f-prov'));
+            const selDist = selectedValues(document.getElementById('f-dist'));
+            const selRuta = selectedValues(document.getElementById('f-ruta'));
+          
+            // Guardamos qué rutas quedaron visibles por los puntos (para sincronizar polígonos)
+            const routeVisibility = new Map(); // Ruta -> visible
+          
+            for (const it of labelItems) {
+              const p = it.props || {};
+              const okDep  = selDep.length  === 0 || selDep.includes(p.Departamentos);
+              const okProv = selProv.length === 0 || selProv.includes(p.Provincias);
+              const okDist = selDist.length === 0 || selDist.includes(p.Distritos);
+              const okRuta = selRuta.length === 0 || selRuta.includes(p.Ruta);
+              const visible = !!(okDep && okProv && okDist && okRuta);
+          
+              if (visible) {
+                it.marker.addTo(pointsLayer);
+                it.labelMarker.addTo(labelsLayer);
+                it.line.addTo(linesLayer);
+                if (p.Ruta != null) routeVisibility.set(p.Ruta, true);
+              } else {
+                pointsLayer.removeLayer(it.marker);
+                labelsLayer.removeLayer(it.labelMarker);
+                linesLayer.removeLayer(it.line);
+              }
+            }
+          
+            // Polígonos: mostrar solo los de rutas que quedaron visibles y además respetar zoom
+            if (polygonsLayer) {
+              const withinZoom = map.getZoom() >= ZOOM_SHOW_POLYGONS;
+          
+              polygonsLayer.eachLayer(layer => {
+                const ruta = layer.feature?.properties?.Ruta;
+                const passesRutaFilter = (selRuta.length === 0) || selRuta.includes(ruta);
+                const hasVisiblePoints = !!routeVisibility.get(ruta);
+          
+                // Bandera persistente de si pasa el filtro (se usa también en togglePolygonsByZoom)
+                const visibleByFilter = passesRutaFilter && hasVisiblePoints;
+                layer._visibleByFilter = visibleByFilter;
+          
+                const shouldBeOn = withinZoom && visibleByFilter;
+                if (shouldBeOn) {
+                  layer.addTo(map);
+                } else {
+                  map.removeLayer(layer);
+                }
+              });
+            }
+          
+            updateAllLabels();
+            togglePolygonsByZoom(); // asegura coherencia con el umbral de zoom
+          }
+  
+          function clearFilters() {
+            for (const id of ['f-dep','f-prov','f-dist','f-ruta']) {   // 👈 añade 'f-ruta' aquí
+              const sel = document.getElementById(id);
+              for (const opt of sel.options) opt.selected = false;
+            }
+            applyFilters();
+          }
+  
+          document.getElementById('applyFilters').addEventListener('click', applyFilters);
+          document.getElementById('clearFilters').addEventListener('click', clearFilters);
+  
+          // Eventos de mapa
+          map.on('zoomend moveend', () => {
+            updateZoomIndicator();
+            updateAllLabels();
+            togglePolygonsByZoom();
+          });
+  
+          // Inicial
+          updateZoomIndicator();
+          updateAllLabels();
+        })
+        .catch(err => console.error('Error cargando puntos:', err));
+  
+      // Mostrar/ocultar polígonos por zoom
+      //function togglePolygonsByZoom() {
+      //  if (!polygonsLayer) return;
+      //  const show = map.getZoom() >= ZOOM_SHOW_POLYGONS;
+      //  polygonsLayer.eachLayer(layer => {
+      //    if (show) layer.addTo(map); else map.removeLayer(layer);
+      //  });
+      //}
+  
+      function togglePolygonsByZoom() {
+        if (!polygonsLayer) return;
+        const withinZoom = map.getZoom() >= ZOOM_SHOW_POLYGONS;
+      
+        polygonsLayer.eachLayer(layer => {
+          // Si nunca se filtró, _visibleByFilter quedará undefined → trátalo como true
+          const visibleByFilter = (layer._visibleByFilter !== false);
+          const shouldBeOn = withinZoom && visibleByFilter;
+      
+          if (shouldBeOn) {
+            layer.addTo(map);
+          } else {
+            map.removeLayer(layer);
+          }
+        });
+      }
+  
+      // Mostrar/ocultar etiquetas por zoom
+      function toggleLabelsByZoom() {
+        const show = map.getZoom() >= ZOOM_SHOW_LABELS;
+        if (show) {
+          if (!map.hasLayer(labelsLayer)) map.addLayer(labelsLayer);
+          if (!map.hasLayer(linesLayer))  map.addLayer(linesLayer);
+        } else {
+          if (map.hasLayer(labelsLayer)) map.removeLayer(labelsLayer);
+          if (map.hasLayer(linesLayer))  map.removeLayer(linesLayer);
+        }
+      }
+  
+      // Botón “mi ubicación” con seguimiento en tiempo real
+      let userMarker = null, userCircle = null;
+      // NUEVO: estado de seguimiento y referencia al botón
+      let following = false;
+      const locateBtn = document.getElementById('locateBtn');
+  
+      //document.getElementById('locateBtn').addEventListener('click', () => {
+       // map.locate({ setView: true, watch: true, enableHighAccuracy: true, maxZoom: 18 });
+      //});
+  
+      locateBtn.addEventListener('click', () => {
+        // Alterna el modo "seguir"
+        following = !following;
+      
+        // (Opcional) Cambia el texto/tooltip del botón
+        locateBtn.title = following ? 'Dejar de seguir mi ubicación' : 'Seguir mi ubicación';
+        // Si quieres también cambiar el contenido del botón, descomenta la siguiente línea:
+        // locateBtn.textContent = following ? '📍 Siguiendo' : '📍';
+      
+        if (following) {
+          // Centra una sola vez cuando llegue el próximo fix
+          map.once('locationfound', (e) => {
+            map.setView(e.latlng, Math.max(map.getZoom(), 17));
+          });
+          // Empieza a seguir en tiempo real, sin re-centrar automáticamente cada actualización
+          map.locate({ setView: false, watch: true, enableHighAccuracy: true, maxZoom: 18 });
+        } else {
+          // Deja de escuchar actualizaciones de ubicación
+          map.stopLocate();
+        }
+      });
+      
+      map.on('locationfound', (e) => {
+        const { latlng, accuracy } = e;
+        // Icono cuadrado azul
+        const blueSquareIcon = L.divIcon({
+          className: '', // sin estilos de leaflet por defecto
+          html: '<div style="width:20px;height:20px;background:#005af0;border-radius:4px;border:2px solid white;"></div>',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10] // para centrar el cuadrado en la ubicación
+        });
+  
+        // Icono circular azul con borde blanco
+        const blueCircleIcon = L.divIcon({
+          className: '', // sin clases base de Leaflet
+          html: '<div style="width:20px;height:20px;background:#005af0;border:5px solid white;border-radius:50%;"></div>',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10] // centra el círculo en la posición
+        });
+        
+        if (!userMarker) {
+          // userMarker = L.marker(latlng).addTo(map);
+          userMarker = L.marker(latlng, { icon: blueCircleIcon }).addTo(map);
+        } else {
+          userMarker.setLatLng(latlng);
+        }
+        if (!userCircle) {
+          userCircle = L.circle(latlng, { radius: accuracy, color: '#3388ff', weight: 1, fillOpacity: 0.15 }).addTo(map);
+        } else {
+          userCircle.setLatLng(latlng);
+          userCircle.setRadius(accuracy);
+        }
+        // NUEVO: solo recentrar si el modo "seguir" está activo
+        if (following) map.panTo(latlng);
+      });
+      map.on('locationerror', () => {
+        alert('No fue posible obtener tu ubicación. Verifica permisos del navegador.');
+      });
+
+    }
+
+    loadConfig();
+  </script>
+</body>
+</html>

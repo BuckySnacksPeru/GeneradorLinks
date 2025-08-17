@@ -1,0 +1,55 @@
+{
+  "input_csv": "BD_PDV.csv",
+  "client_prefix": "Rutas_Aldo",
+  "filtros": {
+    "Departamentos": [
+      "LimaProvince"
+    ],
+    "Provincias": [
+      "Lima"
+    ],
+    "Distritos": [
+      "VillaMariadelTriunfo"
+    ],
+    "Ruta": []
+  },
+  "cluster": {
+    "vias_file": "vias_Peru.geojson",
+    "reference_point": [
+      -12.212422152882215,
+      -76.9075602378917
+    ],
+    "target_size": 60,
+    "min_size": 50,
+    "max_size": 80,
+    "max_routes": 12,
+    "buffer_m": 50,
+    "eps_metros": 500,
+    "fusion_dist_max": 1000,
+    "distance_method": "planar"
+  },
+  "polygon": {
+    "polygon_buffer_m": 50,
+    "polygon_method": "convex",
+    "simplify_tolerance": 20,
+    "roads_buffer_m": 50,
+    "allow_multipolygon": false
+  },
+  "naming": {
+    "clean": "./insumos/{prefix}_Datalimpia_{datetime}.csv",
+    "cluster": "./insumos/{prefix}_Rutas_{datetime}.csv",
+    "polygons": "./insumos/{prefix}_Poligonos_{datetime}.geojson",
+    "public_points": "./data/{prefix}_PuntosPublicos_{datetime}.geojson",
+    "public_polygons": "./data/{prefix}_PoligonosPublicos_{datetime}.geojson"
+  },
+  "web": {
+    "map_center": [
+      -12.02996,
+      -76.913363
+    ],
+    "zoom_initial": 14,
+    "zoom_show_polygons": 13,
+    "zoom_show_labels": 15
+  },
+  "now": "20250817"
+}
